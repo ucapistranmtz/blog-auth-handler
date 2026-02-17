@@ -20,22 +20,32 @@ jobs:
               run: |
                   npm ci
                   npm audit --audit-level=high
+                  # Copiamos node_modules a src para que el zip sea autónomo
                   cp -r node_modules src/
+
             - name: Run Tests
               run: npm test
 
             - name: Zip function
               run: |
-                  # Entramos a src, nos aseguramos que node_modules esté ahí
-                  # y comprimimos todo lo que esté ADENTRO de esa carpeta
                   cd src
-                  zip -r ../function.zip ./* # El ./* asegura que index.js quede en la raíz del ZIP
+                  zip -r ../function.zip ./*
 
-            - name: Deploy to AWS
+            - name: Upload to S3 Artifacts
+              run: |
+                  # Usamos la variable PROJECT_NAME que configuraste
+                  aws s3 cp function.zip s3://${{ vars.PROJECT_NAME }}-artifacts/auth-handler.zip
+              env:
+                  AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
+                  AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+                  AWS_DEFAULT_REGION: ${{ vars.AWS_REGION }}
+
+            - name: Deploy to AWS Lambda (via S3)
               uses: appleboy/lambda-action@master
               with:
                   aws_access_key_id: ${{ secrets.AWS_ACCESS_KEY_ID }}
                   aws_secret_access_key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
                   aws_region: ${{ vars.AWS_REGION }}
-                  function_name: blog-website-auth-handler
-                  zip_file: function.zip
+                  function_name: ${{ vars.PROJECT_NAME }}-auth-handler
+                  s3_bucket: ${{ vars.PROJECT_NAME }}-artifacts
+                  s3_key: auth-handler.zip
