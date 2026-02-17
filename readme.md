@@ -1,27 +1,32 @@
 # 🚀 blog-auth-handler
 
-Este repositorio contiene la función **AWS Lambda** (Python) que sirve como el "backend" de sincronización para **Better-Auth**. Se activa mediante disparadores de **Amazon Cognito** cuando un usuario se registra o inicia sesión.
+Este repositorio contiene la función **AWS Lambda** escrita en **Python** que gestiona la persistencia de usuarios en la base de datos **Neon (PostgreSQL)**. Funciona como un disparador (Trigger) de **Amazon Cognito** dentro del flujo de autenticación de **Better-Auth**.
 
-## 🏗️ Arquitectura: Better-Auth + Cognito Integration
+## 🏗️ Arquitectura: Identity-First Flow
 
-Esta Lambda asegura que cada vez que un usuario se autentique mediante Better-Auth en el frontend, sus datos queden persistidos en nuestra base de datos relacional.
+Siguiendo las mejores prácticas, la base de datos solo se actualiza una vez que la identidad ha sido confirmada por el proveedor (Cognito).
 
 ```mermaid
 graph TD
-    %% Nodos
+    %% Definición de Nodos
     User["💻 User (Next.js + Better-Auth)"]
-    Cog["🆔 AWS Cognito (OAuth2 Provider)"]
+    Cog["🆔 Amazon Cognito (Identity Provider)"]
     L["⚡ Lambda: blog-auth-handler"]
-    DB["💎 Neon DB (PostgreSQL)"]
+    DB["💎 Neon PostgreSQL (Users Table)"]
+    Sec["🔐 Secrets Manager (DB_URL)"]
 
-    %% Flujo
-    User -- "Authenticates" --> Cog
-    Cog -- "Post-Confirmation Trigger" --> L
-    L -- "Upsert User Data" --> DB
+    %% Flujo de la Verdad
+    User -- "1. Intent: Signup/Login" --> Cog
+    Cog -- "2. Success: Post-Confirmation" --> L
 
-    %% Estilos
+    %% Sincronización
+    L -- "3. Fetch Credentials" --> Sec
+    L -- "4. Persistent Sync (INSERT/UPDATE)" --> DB
+
+    %% Estilos Pro (Dark Mode + Red)
     style L fill:#000,stroke:#ff0000,stroke-width:3px,color:#ff0000
     style Cog fill:#1a1a1a,stroke:#f44336,stroke-width:1px,color:#ffffff
     style DB fill:#1a1a1a,stroke:#ffffff,stroke-width:1px,color:#ffffff
     style User fill:#1a1a1a,stroke:#ffffff,stroke-width:1px,color:#ffffff
+    style Sec fill:#1a1a1a,stroke:#fbc02d,stroke-width:1px,color:#ffffff
 ```
