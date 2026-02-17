@@ -1,0 +1,13 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+.venv/
+env/
+requirements.txt.log
+
+# Terraform (si decides poner el .tf aquí también)
+.terraform/
+*.tfstate
+*.tfstate.backup
+*.tfvars
