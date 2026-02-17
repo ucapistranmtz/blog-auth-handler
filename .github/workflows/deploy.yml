@@ -25,7 +25,7 @@ jobs:
 
             - name: Clean devDependencies
               run: |
-                  # Ahora sí, borramos Jest y demás herramientas de desarrollo
+                  # Ahora sí , borramos Jest y demás herramientas de desarrollo
                   npm prune --production
                   # Copiamos solo lo necesario para producción
                   cp -r node_modules src/
