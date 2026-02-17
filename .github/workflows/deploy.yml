@@ -27,9 +27,9 @@ jobs:
 
             - name: Clean devDependencies
               run: |
-                  # Keep the ZIP small by removing dev deps
+                  # Keep the ZIP small for faster uploads
                   npm prune --production
-                  # Merge node_modules into src for a self-contained artifact
+                  # Merge node_modules into src for a functional artifact
                   cp -r node_modules src/
 
             - name: Zip function
@@ -40,7 +40,7 @@ jobs:
             - name: Upload to S3 and Get Version
               id: upload_s3
               run: |
-                  # Upload and capture the alphanumeric VersionId string
+                  # Upload artifact and capture the S3 VersionId
                   VERSION_ID=$(aws s3api put-object \
                     --bucket ${{ vars.PROJECT_NAME }}-artifacts \
                     --key auth-handler.zip \
@@ -53,26 +53,36 @@ jobs:
                   AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
                   AWS_DEFAULT_REGION: ${{ vars.AWS_REGION }}
 
-            - name: Deploy to AWS Lambda (Native CLI)
+            - name: Deploy and Publish Lambda Version
+              id: deploy_lambda
               run: |
                   echo "Waiting for function to be in Active state..."
                   aws lambda wait function-active-v2 --function-name ${{ vars.PROJECT_NAME }}-auth-handler
-                  #Using PR header as description
-                  COMMIT_MSG=$(git log -1 --pretty=%s | sed 's/["'\'']//g')
-                  DEPLOY_DESC="Deployment: $COMMIT_MSG (Run ID: ${{ github.run_id }})"
 
+                  # 1. Update the code in $LATEST
                   echo "Updating code for function: ${{ vars.PROJECT_NAME }}-auth-handler"
-
                   aws lambda update-function-code \
                     --function-name ${{ vars.PROJECT_NAME }}-auth-handler \
                     --s3-bucket ${{ vars.PROJECT_NAME }}-artifacts \
                     --s3-key auth-handler.zip \
-                    --s3-object-version ${{ steps.upload_s3.outputs.s3_version_id }} \                    
-                    --publish
-                    --description "$DEPLOY_DESC" \
+                    --s3-object-version ${{ steps.upload_s3.outputs.s3_version_id }}
 
-                  echo "Waiting for the update to complete..."
+                  # 2. Wait for the code update to process
                   aws lambda wait function-updated-v2 --function-name ${{ vars.PROJECT_NAME }}-auth-handler
+
+                  # 3. Sanitize PR title for the description (removes quotes)
+                  COMMIT_MSG=$(git log -1 --pretty=%s | sed 's/["'\'']//g')
+                  DEPLOY_DESC="PR: $COMMIT_MSG (Run: ${{ github.run_id }})"
+
+                  # 4. Publish new version with the PR description
+                  echo "Publishing version with description: $DEPLOY_DESC"
+                  NEW_VER=$(aws lambda publish-version \
+                    --function-name ${{ vars.PROJECT_NAME }}-auth-handler \
+                    --description "$DEPLOY_DESC" \
+                    --query 'Version' --output text)
+
+                  # Pass version number to the next step
+                  echo "new_version=$NEW_VER" >> $GITHUB_OUTPUT
               env:
                   AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
                   AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
@@ -80,23 +90,9 @@ jobs:
 
             - name: Update Alias 'live'
               run: |
-                  # Get the numeric version number of the snapshot we just published
-                  LATEST_VERSION=$(aws lambda list-versions-by-function \
-                    --function-name ${{ vars.PROJECT_NAME }}-auth-handler \
-                    --query 'Versions[-1].Version' \
-                    --output text)
-
-                  echo "Pointing alias 'live' to version: $LATEST_VERSION"
+                  echo "Moving 'live' alias to version: ${{ steps.deploy_lambda.outputs.new_version }}"
 
                   aws lambda update-alias \
                     --function-name ${{ vars.PROJECT_NAME }}-auth-handler \
                     --name live \
-                    --function-version "$LATEST_VERSION" || \
-                  aws lambda create-alias \
-                    --function-name ${{ vars.PROJECT_NAME }}-auth-handler \
-                    --name live \
-                    --function-version "$LATEST_VERSION"
-              env:
-                  AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
-                  AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
-                  AWS_DEFAULT_REGION: ${{ vars.AWS_REGION }}
+                    --function-version ${{ steps.deploy_lambda.outputs.new_version }}
