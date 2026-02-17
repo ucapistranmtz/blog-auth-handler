@@ -9,7 +9,8 @@ jobs:
     deploy:
         runs-on: ubuntu-latest
         steps:
-            - uses: actions/checkout@v4
+            - name: Checkout code
+              uses: actions/checkout@v4
 
             - name: Setup Node.js
               uses: actions/setup-node@v4
@@ -26,9 +27,9 @@ jobs:
 
             - name: Clean devDependencies
               run: |
-                  # Eliminamos herramientas de test para que el ZIP sea ligero
+                  # Eliminamos Jest y herramientas de desarrollo para un ZIP ligero
                   npm prune --production
-                  # Copiamos node_modules a src para el empaquetado
+                  # Copiamos node_modules a src para que el ZIP sea funcional
                   cp -r node_modules src/
 
             - name: Zip function
@@ -39,7 +40,7 @@ jobs:
             - name: Upload to S3 and Get Version
               id: upload_s3
               run: |
-                  # Subimos el archivo y guardamos el ID de versión único que genera S3
+                  # Subimos el ZIP y capturamos el VersionId (que es un STRING alfanumérico)
                   VERSION_ID=$(aws s3api put-object \
                     --bucket ${{ vars.PROJECT_NAME }}-artifacts \
                     --key auth-handler.zip \
@@ -47,7 +48,6 @@ jobs:
                     --query 'VersionId' \
                     --output text)
 
-                  # Exportamos la versión para el siguiente paso
                   echo "s3_version_id=$VERSION_ID" >> $GITHUB_OUTPUT
               env:
                   AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
@@ -63,6 +63,9 @@ jobs:
                   function_name: ${{ vars.PROJECT_NAME }}-auth-handler
                   s3_bucket: ${{ vars.PROJECT_NAME }}-artifacts
                   s3_key: auth-handler.zip
-                  # Usamos el ID específico para forzar el despliegue
+                  # Pasamos el VersionId (string) para que AWS sepa exactamente qué archivo usar
                   s3_object_version: ${{ steps.upload_s3.outputs.s3_version_id }}
+                  # Publicamos una nueva versión para "asentar" el cambio
+                  publish: true
+                  # Aumentamos intentos por si AWS está lento procesando el ZIP
                   max_attempts: 120
