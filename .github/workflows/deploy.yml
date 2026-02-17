@@ -20,6 +20,8 @@ jobs:
               run: |
                   npm install pg
                   cp -r node_modules src/
+            - name: Run Tests
+              run: npm test
 
             - name: Zip function
               run: |
