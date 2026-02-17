@@ -20,7 +20,8 @@ jobs:
               run: |
                   npm ci
                   npm audit --audit-level=high
-                  # Copiamos node_modules a src para que el zip sea autónomo
+                  # Limpiamos archivos de desarrollo para reducir el tamaño del ZIP
+                  npm prune --production
                   cp -r node_modules src/
 
             - name: Run Tests
@@ -29,11 +30,11 @@ jobs:
             - name: Zip function
               run: |
                   cd src
+                  # Comprimimos solo lo necesario
                   zip -r ../function.zip ./*
 
             - name: Upload to S3 Artifacts
               run: |
-                  # Usamos la variable PROJECT_NAME que configuraste
                   aws s3 cp function.zip s3://${{ vars.PROJECT_NAME }}-artifacts/auth-handler.zip
               env:
                   AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
@@ -49,3 +50,5 @@ jobs:
                   function_name: ${{ vars.PROJECT_NAME }}-auth-handler
                   s3_bucket: ${{ vars.PROJECT_NAME }}-artifacts
                   s3_key: auth-handler.zip
+                  # Añadimos un timeout para que no se quede esperando infinitamente si AWS está lento
+                  timeout: 120s
