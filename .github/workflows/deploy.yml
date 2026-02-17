@@ -11,6 +11,8 @@ jobs:
         steps:
             - name: Checkout code
               uses: actions/checkout@v4
+              with:
+                  fetch-depth: 0 # Essential to read the commit history for titles
 
             - name: Setup Node.js
               uses: actions/setup-node@v4
@@ -27,9 +29,7 @@ jobs:
 
             - name: Clean devDependencies
               run: |
-                  # Remove dev dependencies to keep the package light
                   npm prune --production
-                  # Merge node_modules into src for the deployment artifact
                   cp -r node_modules src/
 
             - name: Zip function
@@ -40,7 +40,6 @@ jobs:
             - name: Upload to S3 and Get Version
               id: upload_s3
               run: |
-                  # Uploading to S3 and capturing the specific S3 Object Version
                   VERSION_ID=$(aws s3api put-object \
                     --bucket ${{ vars.PROJECT_NAME }}-artifacts \
                     --key auth-handler.zip \
@@ -70,22 +69,32 @@ jobs:
                   # 2. Wait for code update to be successful
                   aws lambda wait function-updated-v2 --function-name ${{ vars.PROJECT_NAME }}-auth-handler --region ${{ vars.AWS_REGION }}
 
-                  # 3. Extract PR metadata from the merge commit
+                  # 3. ADVANCED METADATA EXTRACTION
+                  # Get PR number from the subject
                   PR_NUMBER=$(git log -1 --pretty=%s | grep -oP '#\d+' | head -n 1 | sed 's/#//' || echo "manual")
-                  PR_TITLE=$(git log -1 --pretty=%s | sed 's/["'\'']//g')
 
-                  echo "Publishing version for PR #$PR_NUMBER: $PR_TITLE"
+                  # Extract the clean PR Title from the commit body
+                  # We skip the generic "Merge pull request..." line and take the actual title
+                  RAW_BODY=$(git log -1 --pretty=%B)
+                  CLEAN_TITLE=$(echo "$RAW_BODY" | grep -vE "^Merge pull request|^Merge branch" | sed '/^[[:space:]]*$/d' | head -n 1 | sed 's/["'\'']//g' | xargs)
 
-                  # 4. Publish immutable version with the PR description
+                  # Fallback to subject if body is empty
+                  if [ -z "$CLEAN_TITLE" ]; then
+                    CLEAN_TITLE=$(git log -1 --pretty=%s | sed 's/Merge pull request #[0-9]* from [^[:space:]]*//' | xargs | sed 's/["'\'']//g')
+                  fi
+
+                  echo "Extracted PR Title: $CLEAN_TITLE"
+
+                  # 4. Publish immutable version with the CLEAN PR Title
                   NEW_VER=$(aws lambda publish-version \
                     --function-name ${{ vars.PROJECT_NAME }}-auth-handler \
-                    --description "PR #$PR_NUMBER: $PR_TITLE" \
+                    --description "$CLEAN_TITLE" \
                     --query 'Version' --output text \
                     --region ${{ vars.AWS_REGION }})
 
                   echo "new_version=$NEW_VER" >> $GITHUB_OUTPUT
                   echo "pr_number=$PR_NUMBER" >> $GITHUB_OUTPUT
-                  echo "pr_title=$PR_TITLE" >> $GITHUB_OUTPUT
+                  echo "pr_title=$CLEAN_TITLE" >> $GITHUB_OUTPUT
               env:
                   AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
                   AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
@@ -93,26 +102,24 @@ jobs:
 
             - name: Update Aliases (Live and Historical)
               run: |
-                  # 1. Update 'live' alias - Stability for API Gateway
+                  # 1. Update 'live' alias - Description is now ONLY the PR title
                   echo "Updating 'live' alias to version ${{ steps.deploy_lambda.outputs.new_version }}"
                   aws lambda update-alias \
                     --function-name ${{ vars.PROJECT_NAME }}-auth-handler \
                     --name live \
                     --function-version ${{ steps.deploy_lambda.outputs.new_version }} \
-                    --description "Current: PR #${{ steps.deploy_lambda.outputs.pr_number }} - ${{ steps.deploy_lambda.outputs.pr_title }}" \
+                    --description "${{ steps.deploy_lambda.outputs.pr_title }}" \
                     --region ${{ vars.AWS_REGION }} || \
                   aws lambda create-alias \
                     --function-name ${{ vars.PROJECT_NAME }}-auth-handler \
                     --name live \
                     --function-version ${{ steps.deploy_lambda.outputs.new_version }} \
-                    --description "Production Alias" \
+                    --description "${{ steps.deploy_lambda.outputs.pr_title }}" \
                     --region ${{ vars.AWS_REGION }}
 
                   # 2. Create/Update PR-specific historical alias
                   if [ "${{ steps.deploy_lambda.outputs.pr_number }}" != "manual" ]; then
                     ALIAS_NAME="pr-${{ steps.deploy_lambda.outputs.pr_number }}"
-                    echo "Tagging version with historical alias: $ALIAS_NAME"
-                    
                     aws lambda update-alias \
                       --function-name ${{ vars.PROJECT_NAME }}-auth-handler \
                       --name "$ALIAS_NAME" \
