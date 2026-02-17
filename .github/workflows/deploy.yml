@@ -27,9 +27,9 @@ jobs:
 
             - name: Clean devDependencies
               run: |
-                  # Keep the ZIP small for faster uploads
+                  # Remove dev dependencies to keep the package light
                   npm prune --production
-                  # Merge node_modules into src for a functional artifact
+                  # Merge node_modules into src for the deployment artifact
                   cp -r node_modules src/
 
             - name: Zip function
@@ -40,7 +40,7 @@ jobs:
             - name: Upload to S3 and Get Version
               id: upload_s3
               run: |
-                  # Upload artifact and capture the S3 VersionId
+                  # Uploading to S3 and capturing the specific S3 Object Version
                   VERSION_ID=$(aws s3api put-object \
                     --bucket ${{ vars.PROJECT_NAME }}-artifacts \
                     --key auth-handler.zip \
@@ -60,7 +60,6 @@ jobs:
                   aws lambda wait function-active-v2 --function-name ${{ vars.PROJECT_NAME }}-auth-handler --region ${{ vars.AWS_REGION }}
 
                   # 1. Update the code in $LATEST
-                  echo "Updating code for function: ${{ vars.PROJECT_NAME }}-auth-handler"
                   aws lambda update-function-code \
                     --function-name ${{ vars.PROJECT_NAME }}-auth-handler \
                     --s3-bucket ${{ vars.PROJECT_NAME }}-artifacts \
@@ -68,43 +67,65 @@ jobs:
                     --s3-object-version ${{ steps.upload_s3.outputs.s3_version_id }} \
                     --region ${{ vars.AWS_REGION }}
 
-                  # 2. Wait for the code update to process
+                  # 2. Wait for code update to be successful
                   aws lambda wait function-updated-v2 --function-name ${{ vars.PROJECT_NAME }}-auth-handler --region ${{ vars.AWS_REGION }}
 
-                  # 3. Sanitize PR title for the description (removes quotes)
-                  COMMIT_MSG=$(git log -1 --pretty=%s | sed 's/["'\'']//g')
-                  DEPLOY_DESC="PR: $COMMIT_MSG (Run: ${{ github.run_id }})"
+                  # 3. Extract PR metadata from the merge commit
+                  PR_NUMBER=$(git log -1 --pretty=%s | grep -oP '#\d+' | head -n 1 | sed 's/#//' || echo "manual")
+                  PR_TITLE=$(git log -1 --pretty=%s | sed 's/["'\'']//g')
 
-                  # 4. Publish new version with the PR description
-                  echo "Publishing version with description: $DEPLOY_DESC"
+                  echo "Publishing version for PR #$PR_NUMBER: $PR_TITLE"
+
+                  # 4. Publish immutable version with the PR description
                   NEW_VER=$(aws lambda publish-version \
                     --function-name ${{ vars.PROJECT_NAME }}-auth-handler \
-                    --description "$DEPLOY_DESC" \
+                    --description "PR #$PR_NUMBER: $PR_TITLE" \
                     --query 'Version' --output text \
                     --region ${{ vars.AWS_REGION }})
 
-                  # Pass version number to the next step
                   echo "new_version=$NEW_VER" >> $GITHUB_OUTPUT
+                  echo "pr_number=$PR_NUMBER" >> $GITHUB_OUTPUT
+                  echo "pr_title=$PR_TITLE" >> $GITHUB_OUTPUT
               env:
                   AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
                   AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
                   AWS_DEFAULT_REGION: ${{ vars.AWS_REGION }}
 
-            - name: Update Alias 'live'
+            - name: Update Aliases (Live and Historical)
               run: |
-                  echo "Moving 'live' alias to version: ${{ steps.deploy_lambda.outputs.new_version }} in region ${{ vars.AWS_REGION }}"
-
+                  # 1. Update 'live' alias - Stability for API Gateway
+                  echo "Updating 'live' alias to version ${{ steps.deploy_lambda.outputs.new_version }}"
                   aws lambda update-alias \
                     --function-name ${{ vars.PROJECT_NAME }}-auth-handler \
                     --name live \
                     --function-version ${{ steps.deploy_lambda.outputs.new_version }} \
+                    --description "Current: PR #${{ steps.deploy_lambda.outputs.pr_number }} - ${{ steps.deploy_lambda.outputs.pr_title }}" \
                     --region ${{ vars.AWS_REGION }} || \
                   aws lambda create-alias \
                     --function-name ${{ vars.PROJECT_NAME }}-auth-handler \
                     --name live \
                     --function-version ${{ steps.deploy_lambda.outputs.new_version }} \
-                    --description "Main production alias" \
+                    --description "Production Alias" \
                     --region ${{ vars.AWS_REGION }}
+
+                  # 2. Create/Update PR-specific historical alias
+                  if [ "${{ steps.deploy_lambda.outputs.pr_number }}" != "manual" ]; then
+                    ALIAS_NAME="pr-${{ steps.deploy_lambda.outputs.pr_number }}"
+                    echo "Tagging version with historical alias: $ALIAS_NAME"
+                    
+                    aws lambda update-alias \
+                      --function-name ${{ vars.PROJECT_NAME }}-auth-handler \
+                      --name "$ALIAS_NAME" \
+                      --function-version ${{ steps.deploy_lambda.outputs.new_version }} \
+                      --description "${{ steps.deploy_lambda.outputs.pr_title }}" \
+                      --region ${{ vars.AWS_REGION }} || \
+                    aws lambda create-alias \
+                      --function-name ${{ vars.PROJECT_NAME }}-auth-handler \
+                      --name "$ALIAS_NAME" \
+                      --function-version ${{ steps.deploy_lambda.outputs.new_version }} \
+                      --description "${{ steps.deploy_lambda.outputs.pr_title }}" \
+                      --region ${{ vars.AWS_REGION }}
+                  fi
               env:
                   AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
                   AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
