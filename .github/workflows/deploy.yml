@@ -57,13 +57,18 @@ jobs:
               run: |
                   echo "Waiting for function to be in Active state..."
                   aws lambda wait function-active-v2 --function-name ${{ vars.PROJECT_NAME }}-auth-handler
+                  #Using PR header as description
+                  COMMIT_MSG=$(git log -1 --pretty=%s | tr -d '"')
+                  DEPLOY_DESC="Deployment: $COMMIT_MSG (Run ID: ${{ github.run_id }})"
 
-                  echo "Updating code with S3 Version: ${{ steps.upload_s3.outputs.s3_version_id }}"
+                  echo "Updating code with Description: $DEPLOY_DESC"
+
                   aws lambda update-function-code \
                     --function-name ${{ vars.PROJECT_NAME }}-auth-handler \
                     --s3-bucket ${{ vars.PROJECT_NAME }}-artifacts \
                     --s3-key auth-handler.zip \
                     --s3-object-version ${{ steps.upload_s3.outputs.s3_version_id }} \
+                    --description "$DEPLOY_DESC" \
                     --publish
 
                   echo "Waiting for the update to complete..."
