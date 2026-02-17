@@ -18,7 +18,8 @@ jobs:
 
             - name: Install dependencies
               run: |
-                  npm install pg
+                  npm ci
+                  npm audit --audit-level=high
                   cp -r node_modules src/
             - name: Run Tests
               run: npm test

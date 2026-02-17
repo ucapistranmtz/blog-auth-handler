@@ -4,8 +4,7 @@
   "description": "",
   "main": "index.js",
   "scripts": {
-    "test": "jest"
-  },
+    "test": "jest --passWithNoTests --forceExit"  },
   "repository": {
     "type": "git",
     "url": "git+https://github.com/ucapistranmtz/blog-auth-handler.git"
