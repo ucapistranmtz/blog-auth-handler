@@ -58,7 +58,7 @@ jobs:
                   echo "Waiting for function to be in Active state..."
                   aws lambda wait function-active-v2 --function-name ${{ vars.PROJECT_NAME }}-auth-handler
                   #Using PR header as description
-                  COMMIT_MSG=$(git log -1 --pretty=%s | tr -d '"\'')
+                  COMMIT_MSG=$(git log -1 --pretty=%s | sed 's/["'\'']//g')
                   DEPLOY_DESC="Deployment: $COMMIT_MSG (Run ID: ${{ github.run_id }})"
 
                   echo "Updating code for function: ${{ vars.PROJECT_NAME }}-auth-handler"
