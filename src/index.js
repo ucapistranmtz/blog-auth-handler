@@ -1,13 +1,14 @@
 const { Client } = require("pg");
 
 exports.handler = async (event) => {
-  // Log para ver el evento en CloudWatch
   console.log("Cognito Trigger Event:", JSON.stringify(event, null, 2));
 
+  // Extraemos atributos (Nota: Cognito a veces los manda como strings o null)
   const { sub, email, name } = event.request.userAttributes;
 
-  if (!email || !sub || !name) {
-    console.error("Missing required user attributes: email, sub, name ");
+  // Solo email y sub son estrictamente críticos para la identidad
+  if (!email || !sub) {
+    console.error("Missing critical attributes: email or sub");
     return event;
   }
 
@@ -20,19 +21,24 @@ exports.handler = async (event) => {
     await client.connect();
 
     const query = `
-    INSERT INTO users (id, email, name, created_at)
-    VALUES ($1, $2, $3, NOW())
-    ON CONFLICT (id) DO UPDATE SET email = EXCLUDED.email, name = EXCLUDED.name;
+    INSERT INTO "user" (id, email, name, "emailVerified", created_at, updated_at)
+    VALUES ($1, $2, $3, true, NOW(), NOW())
+    ON CONFLICT (id) DO UPDATE SET 
+      email = EXCLUDED.email, 
+      name = EXCLUDED.name,
+      updated_at = NOW();
     `;
 
-    await client.query(query, [sub, email, name || "Anonymous"]);
+    // Si 'name' no viene, usamos 'Anonymous' o el inicio del email
+    const finalName = name || email.split("@")[0] || "Anonymous";
+
+    await client.query(query, [sub, email, finalName]);
     console.log(`Sync completed for user: ${email}`);
   } catch (error) {
     console.error("Database Sync failed:", error);
-    // No lanzamos error para no bloquear el login del usuario en Cognito
   } finally {
     await client.end();
   }
 
-  return event; // OBLIGATORIO: Cognito necesita el evento de vuelta
+  return event;
 };
