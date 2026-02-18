@@ -4,10 +4,10 @@ exports.handler = async (event) => {
   // Log para ver el evento en CloudWatch
   console.log("Cognito Trigger Event:", JSON.stringify(event, null, 2));
 
-  const { sub, email } = event.request.userAttributes;
+  const { sub, email, name } = event.request.userAttributes;
 
-  if (!email || !sub) {
-    console.error("Missing required user attributes: email or sub");
+  if (!email || !sub || !name) {
+    console.error("Missing required user attributes: email, sub, name ");
     return event;
   }
 
@@ -20,12 +20,12 @@ exports.handler = async (event) => {
     await client.connect();
 
     const query = `
-        INSERT INTO users (id, email, created_at)
-        VALUES ($1, $2, NOW())
-        ON CONFLICT (id) DO UPDATE SET email = EXCLUDED.email;
+    INSERT INTO users (id, email, name, created_at)
+    VALUES ($1, $2, $3, NOW())
+    ON CONFLICT (id) DO UPDATE SET email = EXCLUDED.email, name = EXCLUDED.name;
     `;
 
-    await client.query(query, [sub, email]);
+    await client.query(query, [sub, email, name || "Anonymous"]);
     console.log(`Sync completed for user: ${email}`);
   } catch (error) {
     console.error("Database Sync failed:", error);
